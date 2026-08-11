@@ -12,9 +12,9 @@ import (
 
 // Server wraps the HTTP server and all its dependencies.
 type Server struct {
-	httpServer  *http.Server
-	handlers    *Handlers
-	listenAddr  string
+	httpServer *http.Server
+	handlers   *Handlers
+	listenAddr string
 }
 
 // NewServer creates a new HTTP server with all routes registered.
@@ -25,8 +25,9 @@ func NewServer(
 	peerManager *PeerManager,
 	gossiper *Gossiper,
 	chainSync *ChainSync,
+	onBlockAccepted func(),
 ) *Server {
-	handlers := NewHandlers(chain, pool, peerManager, gossiper, chainSync, listenAddr)
+	handlers := NewHandlers(chain, pool, peerManager, gossiper, chainSync, listenAddr, onBlockAccepted)
 
 	mux := http.NewServeMux()
 
@@ -53,9 +54,9 @@ func NewServer(
 	}
 
 	return &Server{
-		httpServer:  httpServer,
-		handlers:    handlers,
-		listenAddr:  listenAddr,
+		httpServer: httpServer,
+		handlers:   handlers,
+		listenAddr: listenAddr,
 	}
 }
 

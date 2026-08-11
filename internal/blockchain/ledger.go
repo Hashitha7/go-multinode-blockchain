@@ -7,14 +7,16 @@ import (
 
 // Ledger tracks account balances derived from the blockchain.
 type Ledger struct {
-	balances map[string]uint64
-	mu       sync.RWMutex
+	balances     map[string]uint64
+	processedTxs map[string]bool
+	mu           sync.RWMutex
 }
 
 // NewLedger creates a new empty ledger.
 func NewLedger() *Ledger {
 	return &Ledger{
-		balances: make(map[string]uint64),
+		balances:     make(map[string]uint64),
+		processedTxs: make(map[string]bool),
 	}
 }
 
@@ -42,8 +44,9 @@ func (l *Ledger) RebuildFromChain(blocks []*Block) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	// Reset balances
+	// Reset balances and processed txs
 	l.balances = make(map[string]uint64)
+	l.processedTxs = make(map[string]bool)
 
 	for _, block := range blocks {
 		if err := l.applyBlock(block); err != nil {
@@ -61,28 +64,67 @@ func (l *Ledger) ApplyBlock(block *Block) error {
 }
 
 // applyBlock applies a block without locking (caller must hold the lock).
+// It applies transactions to a temporary clone first to ensure atomicity.
 func (l *Ledger) applyBlock(block *Block) error {
-	for _, tx := range block.Transactions {
+	// 1. Create a clone of the current state
+	tempBalances := make(map[string]uint64, len(l.balances))
+	for k, v := range l.balances {
+		tempBalances[k] = v
+	}
+
+	tempProcessed := make(map[string]bool, len(l.processedTxs))
+	for k, v := range l.processedTxs {
+		tempProcessed[k] = v
+	}
+
+	var totalFees uint64
+	var coinbaseTx *Transaction
+
+	// 2. Apply transactions to the clone
+	for i, tx := range block.Transactions {
 		if tx.IsCoinbase() {
-			// Mining reward — credit the recipient
-			l.balances[tx.To] += tx.Amount
+			if i != 0 {
+				return fmt.Errorf("coinbase transaction must be first")
+			}
+			coinbaseTx = tx
 			continue
 		}
 
-		totalDebit := tx.Amount + tx.Fee
-		if l.balances[tx.From] < totalDebit {
-			return fmt.Errorf("insufficient balance for tx %s: have %d, need %d",
-				tx.ID, l.balances[tx.From], totalDebit)
+		if tempProcessed[tx.ID] {
+			return fmt.Errorf("transaction replay detected: %s", tx.ID)
 		}
 
-		l.balances[tx.From] -= totalDebit
-		l.balances[tx.To] += tx.Amount
-		// Fees go to the miner (via coinbase)
+		totalDebit := tx.Amount + tx.Fee
+		if tempBalances[tx.From] < totalDebit {
+			return fmt.Errorf("insufficient balance for tx %s: have %d, need %d",
+				tx.ID, tempBalances[tx.From], totalDebit)
+		}
+
+		tempBalances[tx.From] -= totalDebit
+		tempBalances[tx.To] += tx.Amount
+		tempProcessed[tx.ID] = true
+		totalFees += tx.Fee
 	}
+
+	// 3. Validate and apply coinbase
+	if coinbaseTx != nil {
+		maxAllowedReward := MiningReward + totalFees
+		if coinbaseTx.Amount > maxAllowedReward {
+			return fmt.Errorf("coinbase reward exceeds allowed maximum: got %d, max %d", coinbaseTx.Amount, maxAllowedReward)
+		}
+		tempBalances[coinbaseTx.To] += coinbaseTx.Amount
+		tempProcessed[coinbaseTx.ID] = true
+	}
+
+	// 4. Commit changes (Atomic Update)
+	l.balances = tempBalances
+	l.processedTxs = tempProcessed
+
 	return nil
 }
 
 // CanApplyTransaction checks if a transaction can be applied without actually applying it.
+// It also checks for replay protection.
 func (l *Ledger) CanApplyTransaction(tx *Transaction) bool {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
@@ -91,6 +133,53 @@ func (l *Ledger) CanApplyTransaction(tx *Transaction) bool {
 		return true
 	}
 
+	if l.processedTxs[tx.ID] {
+		return false // Replay protection
+	}
+
 	totalDebit := tx.Amount + tx.Fee
 	return l.balances[tx.From] >= totalDebit
+}
+
+// FilterValidTransactions takes a list of pending transactions and returns only
+// those that are valid against the current ledger state without double-spending.
+func (l *Ledger) FilterValidTransactions(txs []*Transaction) []*Transaction {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+
+	// Clone the state to simulate applying transactions
+	tempBalances := make(map[string]uint64, len(l.balances))
+	for k, v := range l.balances {
+		tempBalances[k] = v
+	}
+	tempProcessed := make(map[string]bool, len(l.processedTxs))
+	for k, v := range l.processedTxs {
+		tempProcessed[k] = v
+	}
+
+	validTxs := make([]*Transaction, 0, len(txs))
+
+	for _, tx := range txs {
+		if tx.IsCoinbase() {
+			continue // Handled separately
+		}
+
+		if tempProcessed[tx.ID] {
+			continue // Replay protection
+		}
+
+		totalDebit := tx.Amount + tx.Fee
+		if tempBalances[tx.From] < totalDebit {
+			continue // Insufficient funds (might be caused by a previous tx in this list)
+		}
+
+		// Apply to temp state
+		tempBalances[tx.From] -= totalDebit
+		tempBalances[tx.To] += tx.Amount
+		tempProcessed[tx.ID] = true
+
+		validTxs = append(validTxs, tx)
+	}
+
+	return validTxs
 }

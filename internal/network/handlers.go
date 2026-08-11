@@ -14,12 +14,13 @@ import (
 
 // Handlers holds all HTTP API handler dependencies.
 type Handlers struct {
-	chain       *blockchain.Chain
-	mempool     *mempool.Pool
-	peerManager *PeerManager
-	gossiper    *Gossiper
-	chainSync   *ChainSync
-	selfAddr    string
+	chain           *blockchain.Chain
+	mempool         *mempool.Pool
+	peerManager     *PeerManager
+	gossiper        *Gossiper
+	chainSync       *ChainSync
+	selfAddr        string
+	onBlockAccepted func() // Called when a new block is added to the chain
 }
 
 // NewHandlers creates a new Handlers instance.
@@ -30,14 +31,16 @@ func NewHandlers(
 	gossiper *Gossiper,
 	chainSync *ChainSync,
 	selfAddr string,
+	onBlockAccepted func(),
 ) *Handlers {
 	return &Handlers{
-		chain:       chain,
-		mempool:     pool,
-		peerManager: peerManager,
-		gossiper:    gossiper,
-		chainSync:   chainSync,
-		selfAddr:    selfAddr,
+		chain:           chain,
+		mempool:         pool,
+		peerManager:     peerManager,
+		gossiper:        gossiper,
+		chainSync:       chainSync,
+		selfAddr:        selfAddr,
+		onBlockAccepted: onBlockAccepted,
 	}
 }
 
@@ -74,6 +77,12 @@ func (h *Handlers) HandleSubmitTransaction(w http.ResponseWriter, r *http.Reques
 	// Verify the transaction signature (FR-2)
 	if err := tx.Verify(); err != nil {
 		http.Error(w, fmt.Sprintf("Invalid transaction: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	// Verify the transaction can be applied against the current ledger (Point 1)
+	if !h.chain.GetLedger().CanApplyTransaction(&tx) {
+		http.Error(w, "Transaction invalid against current ledger (insufficient funds or replay)", http.StatusBadRequest)
 		return
 	}
 
@@ -139,6 +148,11 @@ func (h *Handlers) HandleReceiveBlock(w http.ResponseWriter, r *http.Request) {
 
 		// Forward to other peers (FR-4)
 		h.gossiper.GossipBlock(&block, sourcePeer)
+
+		// Notify node to restart miner
+		if h.onBlockAccepted != nil {
+			h.onBlockAccepted()
+		}
 
 		log.Printf("[API] Accepted block #%d from peer %s", block.Index, sourcePeer)
 		writeJSON(w, http.StatusCreated, map[string]string{

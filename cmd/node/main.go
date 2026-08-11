@@ -33,15 +33,37 @@ func main() {
 		}
 	}
 
-	// Generate miner address if not provided
+	// Extract port for data isolation
+	parts := strings.Split(*addr, ":")
+	port := "default"
+	if len(parts) == 2 {
+		port = parts[1]
+	}
+	dataDir := ".data/node_" + port
+
+	// Generate miner address if not provided or load from disk (FR-11)
 	mAddr := *minerAddr
 	if mAddr == "" {
-		pub, _, err := crypto.GenerateKeyPair()
-		if err != nil {
-			log.Fatalf("Failed to generate miner key: %v", err)
+		keyFile := dataDir + "/key.json"
+		keyData, err := os.ReadFile(keyFile)
+		if err == nil {
+			mAddr = string(keyData)
+			log.Printf("Loaded miner address from disk: %s", mAddr)
+		} else {
+			pub, _, err := crypto.GenerateKeyPair()
+			if err != nil {
+				log.Fatalf("Failed to generate miner key: %v", err)
+			}
+			mAddr = crypto.AddressFromPublicKey(pub)
+			os.MkdirAll(dataDir, 0755)
+			os.WriteFile(keyFile, []byte(mAddr), 0644)
+			log.Printf("Generated new miner address: %s", mAddr)
 		}
-		mAddr = crypto.AddressFromPublicKey(pub)
-		log.Printf("Generated miner address: %s", mAddr)
+	}
+
+	// Validate miner address (must be valid hex and at least 16 chars)
+	if len(mAddr) < 16 {
+		log.Fatalf("Invalid miner address: must be at least 16 characters")
 	}
 
 	// Create node config

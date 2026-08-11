@@ -20,7 +20,7 @@ func setupTestHandlers() (*Handlers, *blockchain.Chain, *mempool.Pool) {
 	pm := NewPeerManager()
 	gossiper := NewGossiper(pm, "localhost:9999")
 	cs := NewChainSync(chain, pm)
-	handlers := NewHandlers(chain, pool, pm, gossiper, cs, "localhost:9999")
+	handlers := NewHandlers(chain, pool, pm, gossiper, cs, "localhost:9999", func() {})
 	return handlers, chain, pool
 }
 
@@ -68,10 +68,26 @@ func TestHandleGetChainHeight(t *testing.T) {
 }
 
 func TestHandleSubmitTransaction(t *testing.T) {
-	handlers, _, pool := setupTestHandlers()
+	handlers, chain, pool := setupTestHandlers()
 
-	// Create a valid transaction
+	// Generate key pair
 	pub, priv, _ := crypto.GenerateKeyPair()
+	address := crypto.AddressFromPublicKey(pub)
+
+	// Fund the address by mining a coinbase block to it
+	genesis := chain.GetLatestBlock()
+	block := blockchain.NewBlock(1, []*blockchain.Transaction{
+		blockchain.NewCoinbaseTransaction(address, blockchain.MiningReward),
+	}, genesis.Hash, address, blockchain.DefaultDifficulty)
+	done := make(chan struct{})
+	go func() {
+		block.Mine(done)
+		close(done)
+	}()
+	<-done
+	chain.AddBlock(block)
+
+	// Create a valid transaction from the funded address
 	tx := blockchain.NewTransaction("recipient_address_1234567890abcdef1234", 10, 1, pub, priv)
 
 	txJSON, _ := json.Marshal(tx)
@@ -250,11 +266,11 @@ func TestMultiNodeIntegration(t *testing.T) {
 	// Create test HTTP servers
 	gossiper1 := NewGossiper(pm1, "node1")
 	cs1 := NewChainSync(chain1, pm1)
-	handlers1 := NewHandlers(chain1, pool1, pm1, gossiper1, cs1, "node1")
+	handlers1 := NewHandlers(chain1, pool1, pm1, gossiper1, cs1, "node1", func() {})
 
 	gossiper2 := NewGossiper(pm2, "node2")
 	cs2 := NewChainSync(chain2, pm2)
-	handlers2 := NewHandlers(chain2, pool2, pm2, gossiper2, cs2, "node2")
+	handlers2 := NewHandlers(chain2, pool2, pm2, gossiper2, cs2, "node2", func() {})
 
 	// Set up HTTP test servers
 	mux1 := http.NewServeMux()
@@ -289,10 +305,13 @@ func TestMultiNodeIntegration(t *testing.T) {
 	genesis := chain1.GetLatestBlock()
 	block1 := blockchain.NewBlock(1, []*blockchain.Transaction{
 		blockchain.NewCoinbaseTransaction("miner1", blockchain.MiningReward),
-	}, genesis.Hash, "miner1", 1)
+	}, genesis.Hash, "miner1", blockchain.DefaultDifficulty)
 	done := make(chan struct{})
-	defer close(done)
-	block1.Mine(done)
+	go func() {
+		block1.Mine(done)
+		close(done)
+	}()
+	<-done
 	chain1.AddBlock(block1)
 
 	// Sync node2 with node1

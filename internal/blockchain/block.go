@@ -83,8 +83,9 @@ func (b *Block) Mine(done <-chan struct{}) bool {
 }
 
 // HasValidPoW checks if the block hash satisfies the proof-of-work requirement.
+// It enforces the network's DefaultDifficulty rather than trusting the block's declared difficulty.
 func (b *Block) HasValidPoW() bool {
-	target := strings.Repeat("0", b.Difficulty)
+	target := strings.Repeat("0", DefaultDifficulty)
 	return strings.HasPrefix(b.Hash, target)
 }
 

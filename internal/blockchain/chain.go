@@ -8,17 +8,19 @@ import (
 
 // Chain manages the blockchain state including blocks, ledger, and fork resolution.
 type Chain struct {
-	blocks []*Block
-	ledger *Ledger
-	mu     sync.RWMutex
+	blocks     []*Block
+	sideChains map[string]*Block // hash -> block (orphans/competing blocks)
+	ledger     *Ledger
+	mu         sync.RWMutex
 }
 
 // NewChain creates a new chain starting with the genesis block.
 func NewChain() *Chain {
 	genesis := GenesisBlock()
 	c := &Chain{
-		blocks: []*Block{genesis},
-		ledger: NewLedger(),
+		blocks:     []*Block{genesis},
+		sideChains: make(map[string]*Block),
+		ledger:     NewLedger(),
 	}
 	return c
 }
@@ -84,6 +86,16 @@ func (c *Chain) GetLedger() *Ledger {
 	return c.ledger
 }
 
+// calculateWork computes the total proof of work for a slice of blocks.
+func calculateWork(blocks []*Block) uint64 {
+	var work uint64
+	for _, b := range blocks {
+		// A simple approximation: work = 2^difficulty
+		work += 1 << b.Difficulty
+	}
+	return work
+}
+
 // AddBlock validates and appends a block to the chain.
 // Returns an error if the block is invalid or doesn't extend the current chain.
 func (c *Chain) AddBlock(block *Block) error {
@@ -107,12 +119,25 @@ func (c *Chain) AddBlock(block *Block) error {
 	return nil
 }
 
-// ReorganiseTo switches to a longer/better competing chain.
+// ReorganiseTo switches to a better competing chain if it has more cumulative work.
 // Returns orphaned transactions that were in the old chain but not in the new one.
-// This implements FR-6: Fork resolution and reorganisation.
+// This implements FR-6 and the Cumulative Work stretch goal.
 func (c *Chain) ReorganiseTo(newBlocks []*Block) ([]*Transaction, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	// Ensure the new chain starts from the exact same genesis block
+	if newBlocks[0].Hash != c.blocks[0].Hash {
+		return nil, fmt.Errorf("invalid genesis block in new chain")
+	}
+
+	// Compare cumulative work (Heaviest Chain)
+	currentWork := calculateWork(c.blocks)
+	newWork := calculateWork(newBlocks)
+
+	if newWork <= currentWork {
+		return nil, fmt.Errorf("new chain does not have more work: new=%d, current=%d", newWork, currentWork)
+	}
 
 	// Find the common ancestor (fork point)
 	forkPoint := uint64(0)
@@ -124,22 +149,9 @@ func (c *Chain) ReorganiseTo(newBlocks []*Block) ([]*Transaction, error) {
 		}
 	}
 
-	// New chain must be longer
-	if uint64(len(newBlocks)) <= uint64(len(c.blocks)) {
-		return nil, fmt.Errorf("new chain is not longer: new=%d, current=%d", len(newBlocks), len(c.blocks))
-	}
-
 	// Validate the new chain from the fork point
 	for i := forkPoint + 1; i < uint64(len(newBlocks)); i++ {
-		var prevBlock *Block
-		if i == 0 {
-			// Validate genesis
-			if err := newBlocks[i].ValidateGenesis(); err != nil {
-				return nil, fmt.Errorf("invalid genesis in new chain: %w", err)
-			}
-			continue
-		}
-		prevBlock = newBlocks[i-1]
+		prevBlock := newBlocks[i-1]
 		if err := newBlocks[i].Validate(prevBlock); err != nil {
 			return nil, fmt.Errorf("invalid block #%d in new chain: %w", i, err)
 		}
@@ -182,14 +194,14 @@ func (c *Chain) ReorganiseTo(newBlocks []*Block) ([]*Transaction, error) {
 }
 
 // TryAddOrReorg attempts to add a block. If it doesn't extend the current chain
-// but belongs to a competing chain, it returns information for sync.
+// but belongs to a competing chain, it stores it in sideChains and evaluates work.
 // Returns: (added bool, needsSync bool, error)
 func (c *Chain) TryAddOrReorg(block *Block) (bool, bool, error) {
 	c.mu.RLock()
 	latest := c.blocks[len(c.blocks)-1]
 	c.mu.RUnlock()
 
-	// Case 1: Block extends our chain
+	// Case 1: Block extends our chain directly
 	if block.PrevHash == latest.Hash && block.Index == latest.Index+1 {
 		err := c.AddBlock(block)
 		if err != nil {
@@ -198,18 +210,58 @@ func (c *Chain) TryAddOrReorg(block *Block) (bool, bool, error) {
 		return true, false, nil
 	}
 
-	// Case 2: Block is from a longer chain — need to sync
-	if block.Index > latest.Index+1 {
-		return false, true, nil
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Prevent storing invalid or deeply orphaned blocks
+	if block.Index > latest.Index+50 {
+		return false, true, nil // Too far ahead, trigger full sync
 	}
 
-	// Case 3: Block is at same height or behind — competing block, might need reorg
-	if block.Index == latest.Index+1 && block.PrevHash != latest.Hash {
-		// Competing block at same height — need to sync to check which chain is longer
-		return false, true, nil
+	// Case 2 & 3: Competing block (same height or slightly ahead)
+	// We store it in sideChains
+	c.sideChains[block.Hash] = block
+
+	// Try to build a chain back to our main chain to see if it's heavier
+	sideChain := []*Block{block}
+	curr := block
+	for curr.PrevHash != "" {
+		if parent, exists := c.sideChains[curr.PrevHash]; exists {
+			sideChain = append([]*Block{parent}, sideChain...)
+			curr = parent
+		} else {
+			break
+		}
 	}
 
-	// Case 4: Block is behind or duplicate
+	// If the side chain connects to our main chain, evaluate its total work
+	if int(curr.Index-1) < len(c.blocks) && c.blocks[curr.Index-1].Hash == curr.PrevHash {
+		// We have a full path to the main chain!
+		// Build the hypothetical new main chain
+		hypotheticalChain := make([]*Block, curr.Index)
+		copy(hypotheticalChain, c.blocks[:curr.Index])
+		hypotheticalChain = append(hypotheticalChain, sideChain...)
+
+		currentWork := calculateWork(c.blocks)
+		newWork := calculateWork(hypotheticalChain)
+
+		if newWork > currentWork {
+			// Trigger Reorg! (We need to release lock first since ReorganiseTo locks)
+			c.mu.Unlock()
+			_, err := c.ReorganiseTo(hypotheticalChain)
+			c.mu.Lock() // Re-acquire lock for the defer
+			if err != nil {
+				return false, false, fmt.Errorf("failed to reorg from sidechain: %v", err)
+			}
+			return true, false, nil
+		}
+	}
+
+	// If it doesn't connect, or isn't heavier, we just store it and maybe trigger sync
+	if block.Index > latest.Index {
+		return false, true, nil // Ahead, trigger sync to get missing links
+	}
+
 	return false, false, nil
 }
 

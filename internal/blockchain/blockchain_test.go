@@ -114,7 +114,7 @@ func TestGenesisBlock(t *testing.T) {
 func TestBlockMining(t *testing.T) {
 	genesis := GenesisBlock()
 
-	block := NewBlock(1, []*Transaction{}, genesis.Hash, "miner", 1) // Low difficulty for test
+	block := NewBlock(1, []*Transaction{}, genesis.Hash, "miner", DefaultDifficulty) // Low difficulty for test
 	done := make(chan struct{})
 	defer close(done)
 
@@ -133,7 +133,7 @@ func TestBlockMining(t *testing.T) {
 func TestBlockValidation(t *testing.T) {
 	genesis := GenesisBlock()
 
-	block := NewBlock(1, []*Transaction{}, genesis.Hash, "miner", 1)
+	block := NewBlock(1, []*Transaction{}, genesis.Hash, "miner", DefaultDifficulty)
 	done := make(chan struct{})
 	defer close(done)
 	block.Mine(done)
@@ -147,7 +147,7 @@ func TestBlockValidation(t *testing.T) {
 func TestBlockValidationInvalidIndex(t *testing.T) {
 	genesis := GenesisBlock()
 
-	block := NewBlock(5, []*Transaction{}, genesis.Hash, "miner", 1) // Wrong index
+	block := NewBlock(5, []*Transaction{}, genesis.Hash, "miner", DefaultDifficulty) // Wrong index
 	done := make(chan struct{})
 	defer close(done)
 	block.Mine(done)
@@ -160,7 +160,7 @@ func TestBlockValidationInvalidIndex(t *testing.T) {
 func TestBlockValidationInvalidPrevHash(t *testing.T) {
 	genesis := GenesisBlock()
 
-	block := NewBlock(1, []*Transaction{}, "wrong_hash", "miner", 1)
+	block := NewBlock(1, []*Transaction{}, "wrong_hash", "miner", DefaultDifficulty)
 	done := make(chan struct{})
 	defer close(done)
 	block.Mine(done)
@@ -193,7 +193,7 @@ func TestChainAddBlock(t *testing.T) {
 
 	block := NewBlock(1, []*Transaction{
 		NewCoinbaseTransaction("miner", MiningReward),
-	}, genesis.Hash, "miner", 1)
+	}, genesis.Hash, "miner", DefaultDifficulty)
 	done := make(chan struct{})
 	defer close(done)
 	block.Mine(done)
@@ -214,7 +214,7 @@ func TestChainReorganisation(t *testing.T) {
 	genesisA := chainA.GetLatestBlock()
 	block1A := NewBlock(1, []*Transaction{
 		NewCoinbaseTransaction("minerA", MiningReward),
-	}, genesisA.Hash, "minerA", 1)
+	}, genesisA.Hash, "minerA", DefaultDifficulty)
 	done := make(chan struct{})
 	defer close(done)
 	block1A.Mine(done)
@@ -224,12 +224,12 @@ func TestChainReorganisation(t *testing.T) {
 	genesis := GenesisBlock()
 	block1B := NewBlock(1, []*Transaction{
 		NewCoinbaseTransaction("minerB", MiningReward),
-	}, genesis.Hash, "minerB", 1)
+	}, genesis.Hash, "minerB", DefaultDifficulty)
 	block1B.Mine(done)
 
 	block2B := NewBlock(2, []*Transaction{
 		NewCoinbaseTransaction("minerB", MiningReward),
-	}, block1B.Hash, "minerB", 1)
+	}, block1B.Hash, "minerB", DefaultDifficulty)
 	block2B.Mine(done)
 
 	newBlocks := []*Block{genesis, block1B, block2B}
@@ -280,7 +280,7 @@ func TestChainGetBlocksAfter(t *testing.T) {
 	// Add a couple of blocks
 	block1 := NewBlock(1, []*Transaction{
 		NewCoinbaseTransaction("miner", MiningReward),
-	}, genesis.Hash, "miner", 1)
+	}, genesis.Hash, "miner", DefaultDifficulty)
 	done := make(chan struct{})
 	defer close(done)
 	block1.Mine(done)
@@ -288,7 +288,7 @@ func TestChainGetBlocksAfter(t *testing.T) {
 
 	block2 := NewBlock(2, []*Transaction{
 		NewCoinbaseTransaction("miner", MiningReward),
-	}, block1.Hash, "miner", 1)
+	}, block1.Hash, "miner", DefaultDifficulty)
 	block2.Mine(done)
 	chain.AddBlock(block2)
 

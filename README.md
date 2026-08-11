@@ -423,6 +423,19 @@ The full research report is available in [`REPORT.md`](REPORT.md), covering:
 | FR-8 | Node introspection API | **SHOULD** | ✅ |
 | FR-9 | Mempool consistency | **SHOULD** | ✅ |
 | FR-10 | Peer health & exchange | **COULD** | ✅ |
+| FR-11 | Persistence (load/save chain) | **COULD** | ✅ |
+
+<br>
+
+## 📈 What Changed from Round 1
+
+In this Round 2 iteration, the implementation was substantially hardened based on feedback:
+- **Cumulative Work vs Length**: Fork resolution now correctly uses cumulative work (`sum(2^difficulty)`) instead of simple chain length, properly adhering to the heaviest-chain rule.
+- **Mempool Validation**: Transactions are strictly verified against the *ledger state* before entering the mempool, preventing unspendable or replay transactions from clogging the network.
+- **True Concurrency in Mining**: The Miner now correctly listens to `Restart()` signals to abort current proof-of-work immediately when a new block is accepted, eliminating wasted hashing.
+- **Equal-Height Fork Retention**: Replaced the simplistic ignore-equal-height logic with a robust `sideChains` structure that preserves competing blocks, preventing chain stalls.
+- **Atomic Ledger Updates**: Block application is now fully atomic (clone-then-apply) preventing corrupted state on failure.
+- **Persistence & Peer Health**: Implemented saving/loading of the chain state per-node (FR-11) and background peer pinging to evict dead nodes (FR-10).
 
 <br>
 
