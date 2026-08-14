@@ -27,6 +27,11 @@ func (pm *PeerManager) AddPeer(address string) bool {
 		return false
 	}
 
+	if len(pm.peers) >= 50 {
+		log.Printf("[PEERS] Peer limit (50) reached, ignoring %s", address)
+		return false
+	}
+
 	pm.peers[address] = true
 	log.Printf("[PEERS] Added peer: %s", address)
 	return true
@@ -72,6 +77,10 @@ func (pm *PeerManager) ExchangePeers(remotePeers []string, selfAddr string) []st
 			continue
 		}
 		if _, exists := pm.peers[addr]; !exists {
+			if len(pm.peers) >= 50 {
+				log.Printf("[PEERS] Peer limit (50) reached, stopping exchange")
+				break
+			}
 			pm.peers[addr] = true
 			newPeers = append(newPeers, addr)
 			log.Printf("[PEERS] Discovered peer via exchange: %s", addr)

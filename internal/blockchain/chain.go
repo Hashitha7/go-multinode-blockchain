@@ -187,16 +187,24 @@ func (c *Chain) ReorganiseTo(newBlocks []*Block) ([]*Transaction, error) {
 		return nil, fmt.Errorf("failed to rebuild ledger after reorg: %w", err)
 	}
 
-	log.Printf("[CHAIN] Reorganised from height %d to %d (fork at #%d, %d orphaned txs)",
-		oldHeight, len(c.blocks)-1, forkPoint, len(orphanedTxs))
+	// Filter orphaned transactions against the new ledger state
+	validOrphans := make([]*Transaction, 0)
+	for _, tx := range orphanedTxs {
+		if c.ledger.CanApplyTransaction(tx) {
+			validOrphans = append(validOrphans, tx)
+		}
+	}
 
-	return orphanedTxs, nil
+	log.Printf("[CHAIN] Reorganised from height %d to %d (fork at #%d, %d valid orphaned txs)",
+		oldHeight, len(c.blocks)-1, forkPoint, len(validOrphans))
+
+	return validOrphans, nil
 }
 
 // TryAddOrReorg attempts to add a block. If it doesn't extend the current chain
 // but belongs to a competing chain, it stores it in sideChains and evaluates work.
-// Returns: (added bool, needsSync bool, error)
-func (c *Chain) TryAddOrReorg(block *Block) (bool, bool, error) {
+// Returns: (orphanedTxs []*Transaction, added bool, needsSync bool, err error)
+func (c *Chain) TryAddOrReorg(block *Block) ([]*Transaction, bool, bool, error) {
 	c.mu.RLock()
 	latest := c.blocks[len(c.blocks)-1]
 	c.mu.RUnlock()
@@ -205,9 +213,9 @@ func (c *Chain) TryAddOrReorg(block *Block) (bool, bool, error) {
 	if block.PrevHash == latest.Hash && block.Index == latest.Index+1 {
 		err := c.AddBlock(block)
 		if err != nil {
-			return false, false, err
+			return nil, false, false, err
 		}
-		return true, false, nil
+		return nil, true, false, nil
 	}
 
 	c.mu.Lock()
@@ -215,11 +223,18 @@ func (c *Chain) TryAddOrReorg(block *Block) (bool, bool, error) {
 
 	// Prevent storing invalid or deeply orphaned blocks
 	if block.Index > latest.Index+50 {
-		return false, true, nil // Too far ahead, trigger full sync
+		return nil, false, true, nil // Too far ahead, trigger full sync
 	}
 
 	// Case 2 & 3: Competing block (same height or slightly ahead)
 	// We store it in sideChains
+	if len(c.sideChains) >= 100 {
+		// Evict one random element to prevent unbounded growth
+		for k := range c.sideChains {
+			delete(c.sideChains, k)
+			break
+		}
+	}
 	c.sideChains[block.Hash] = block
 
 	// Try to build a chain back to our main chain to see if it's heavier
@@ -248,21 +263,21 @@ func (c *Chain) TryAddOrReorg(block *Block) (bool, bool, error) {
 		if newWork > currentWork {
 			// Trigger Reorg! (We need to release lock first since ReorganiseTo locks)
 			c.mu.Unlock()
-			_, err := c.ReorganiseTo(hypotheticalChain)
+			orphans, err := c.ReorganiseTo(hypotheticalChain)
 			c.mu.Lock() // Re-acquire lock for the defer
 			if err != nil {
-				return false, false, fmt.Errorf("failed to reorg from sidechain: %v", err)
+				return nil, false, false, fmt.Errorf("failed to reorg from sidechain: %v", err)
 			}
-			return true, false, nil
+			return orphans, true, false, nil
 		}
 	}
 
 	// If it doesn't connect, or isn't heavier, we just store it and maybe trigger sync
 	if block.Index > latest.Index {
-		return false, true, nil // Ahead, trigger sync to get missing links
+		return nil, false, true, nil // Ahead, trigger sync to get missing links
 	}
 
-	return false, false, nil
+	return nil, false, false, nil
 }
 
 // Length returns the number of blocks in the chain.

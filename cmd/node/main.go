@@ -66,6 +66,11 @@ func main() {
 		log.Fatalf("Invalid miner address: must be at least 16 characters")
 	}
 
+	// Tie mined difficulty and validated difficulty to one source of truth
+	if *difficulty != blockchain.DefaultDifficulty {
+		log.Fatalf("Invalid difficulty %d: must match network DefaultDifficulty (%d)", *difficulty, blockchain.DefaultDifficulty)
+	}
+
 	// Create node config
 	config := node.Config{
 		ListenAddr:   *addr,

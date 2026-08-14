@@ -51,9 +51,10 @@ func (h *Handlers) HandleSubmitTransaction(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB limit
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		http.Error(w, "Failed to read body", http.StatusBadRequest)
+		http.Error(w, "Failed to read body or payload too large", http.StatusRequestEntityTooLarge)
 		return
 	}
 	defer r.Body.Close()
@@ -65,7 +66,7 @@ func (h *Handlers) HandleSubmitTransaction(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Check de-duplication via gossiper
-	if h.gossiper.IsSeenTx(tx.ID) {
+	if h.gossiper.HasSeenTx(tx.ID) {
 		// Already seen — don't forward again (prevents loops)
 		writeJSON(w, http.StatusOK, map[string]string{
 			"status": "already_seen",
@@ -74,11 +75,14 @@ func (h *Handlers) HandleSubmitTransaction(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Verify the transaction signature (FR-2)
+	// Verify the transaction signature (FR-2) BEFORE marking it as seen
 	if err := tx.Verify(); err != nil {
 		http.Error(w, fmt.Sprintf("Invalid transaction: %v", err), http.StatusBadRequest)
 		return
 	}
+
+	// Signature is valid, now we can safely mark it as seen
+	h.gossiper.MarkTx(tx.ID)
 
 	// Verify the transaction can be applied against the current ledger (Point 1)
 	if !h.chain.GetLedger().CanApplyTransaction(&tx) {
@@ -114,9 +118,10 @@ func (h *Handlers) HandleReceiveBlock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, 5<<20) // 5 MB limit
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		http.Error(w, "Failed to read body", http.StatusBadRequest)
+		http.Error(w, "Failed to read body or payload too large", http.StatusRequestEntityTooLarge)
 		return
 	}
 	defer r.Body.Close()
@@ -128,13 +133,14 @@ func (h *Handlers) HandleReceiveBlock(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check de-duplication
-	if h.gossiper.IsSeenBlock(block.Hash) {
+	if h.gossiper.HasSeenBlock(block.Hash) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "already_seen"})
 		return
 	}
+	h.gossiper.MarkBlock(block.Hash)
 
 	// Try to add the block or determine if we need sync
-	added, needsSync, err := h.chain.TryAddOrReorg(&block)
+	orphanedTxs, added, needsSync, err := h.chain.TryAddOrReorg(&block)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to process block: %v", err), http.StatusBadRequest)
 		return
@@ -145,6 +151,11 @@ func (h *Handlers) HandleReceiveBlock(w http.ResponseWriter, r *http.Request) {
 	if added {
 		// Remove mined transactions from mempool (FR-9)
 		h.mempool.RemoveByBlock(&block)
+
+		// Requeue orphaned txs from Reorg
+		if len(orphanedTxs) > 0 {
+			h.mempool.ReturnOrphaned(orphanedTxs)
+		}
 
 		// Forward to other peers (FR-4)
 		h.gossiper.GossipBlock(&block, sourcePeer)
@@ -244,9 +255,10 @@ func (h *Handlers) HandleGetPeers(w http.ResponseWriter, r *http.Request) {
 
 	// POST /peers — exchange peer lists
 	if r.Method == http.MethodPost {
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB limit
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
-			http.Error(w, "Failed to read body", http.StatusBadRequest)
+			http.Error(w, "Failed to read body or payload too large", http.StatusRequestEntityTooLarge)
 			return
 		}
 		defer r.Body.Close()

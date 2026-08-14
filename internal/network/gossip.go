@@ -28,8 +28,8 @@ func NewSeenTracker(ttl time.Duration) *SeenTracker {
 	return st
 }
 
-// MarkSeen marks an ID as seen. Returns true if it was already seen (duplicate).
-func (st *SeenTracker) MarkSeen(id string) bool {
+// HasSeen checks if an ID has been seen and is not expired, without marking it.
+func (st *SeenTracker) HasSeen(id string) bool {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
@@ -38,8 +38,14 @@ func (st *SeenTracker) MarkSeen(id string) bool {
 			return true // Already seen and not expired
 		}
 	}
-	st.seen[id] = time.Now()
 	return false
+}
+
+// Mark adds an ID to the seen tracker.
+func (st *SeenTracker) Mark(id string) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	st.seen[id] = time.Now()
 }
 
 // Cleanup removes expired entries.
@@ -97,7 +103,7 @@ func NewGossiper(peerManager *PeerManager, selfAddr string) *Gossiper {
 // Returns the number of peers it was successfully sent to.
 func (g *Gossiper) GossipTransaction(tx *blockchain.Transaction, excludePeer string) int {
 	// Mark as seen so we don't process it again
-	g.seenTxs.MarkSeen(tx.ID)
+	g.seenTxs.Mark(tx.ID)
 
 	peers := g.peerManager.GetPeers()
 	successCount := 0
@@ -125,7 +131,7 @@ func (g *Gossiper) GossipTransaction(tx *blockchain.Transaction, excludePeer str
 // GossipBlock forwards a block to all peers except the source.
 func (g *Gossiper) GossipBlock(block *blockchain.Block, excludePeer string) int {
 	// Mark as seen so we don't process it again
-	g.seenBlocks.MarkSeen(block.Hash)
+	g.seenBlocks.Mark(block.Hash)
 
 	peers := g.peerManager.GetPeers()
 	successCount := 0
@@ -150,14 +156,24 @@ func (g *Gossiper) GossipBlock(block *blockchain.Block, excludePeer string) int 
 	return successCount
 }
 
-// IsSeenTx checks if a transaction has been recently seen.
-func (g *Gossiper) IsSeenTx(txID string) bool {
-	return g.seenTxs.MarkSeen(txID)
+// HasSeenTx checks if a transaction has been recently seen.
+func (g *Gossiper) HasSeenTx(txID string) bool {
+	return g.seenTxs.HasSeen(txID)
 }
 
-// IsSeenBlock checks if a block has been recently seen.
-func (g *Gossiper) IsSeenBlock(blockHash string) bool {
-	return g.seenBlocks.MarkSeen(blockHash)
+// MarkTx marks a transaction as seen.
+func (g *Gossiper) MarkTx(txID string) {
+	g.seenTxs.Mark(txID)
+}
+
+// HasSeenBlock checks if a block has been recently seen.
+func (g *Gossiper) HasSeenBlock(blockHash string) bool {
+	return g.seenBlocks.HasSeen(blockHash)
+}
+
+// MarkBlock marks a block as seen.
+func (g *Gossiper) MarkBlock(blockHash string) {
+	g.seenBlocks.Mark(blockHash)
 }
 
 // sendTransaction sends a transaction to a specific peer.

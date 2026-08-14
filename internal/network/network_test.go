@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -237,17 +238,18 @@ func TestSeenTracker(t *testing.T) {
 	st := NewSeenTracker(1 * time.Second)
 
 	// First time should not be seen
-	if st.MarkSeen("tx1") {
-		t.Error("First MarkSeen should return false")
+	if st.HasSeen("tx1") {
+		t.Error("First HasSeen should return false")
 	}
+	st.Mark("tx1")
 
 	// Second time should be seen
-	if !st.MarkSeen("tx1") {
-		t.Error("Second MarkSeen should return true")
+	if !st.HasSeen("tx1") {
+		t.Error("Second HasSeen should return true")
 	}
 
 	// Different ID should not be seen
-	if st.MarkSeen("tx2") {
+	if st.HasSeen("tx2") {
 		t.Error("Different ID should not be seen")
 	}
 }
@@ -335,4 +337,62 @@ func TestMultiNodeIntegration(t *testing.T) {
 	}
 
 	_ = fmt.Sprintf("test") // avoid unused import
+}
+
+// TestConcurrentMineAndGossip stresses the node by mining and receiving gossiped txs concurrently.
+func TestConcurrentMineAndGossip(t *testing.T) {
+	chain1 := blockchain.NewChain()
+	pool1 := mempool.NewPool()
+	pm1 := NewPeerManager()
+	gossiper1 := NewGossiper(pm1, "node1")
+	cs1 := NewChainSync(chain1, pm1)
+	handlers1 := NewHandlers(chain1, pool1, pm1, gossiper1, cs1, "node1", func() {})
+
+	mux1 := http.NewServeMux()
+	mux1.HandleFunc("/tx", handlers1.HandleSubmitTransaction)
+	server := httptest.NewServer(mux1)
+	defer server.Close()
+
+	var wg sync.WaitGroup
+
+	// 1. Miner goroutine (mines blocks continuously)
+	done := make(chan struct{})
+	
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 5; i++ {
+			b := blockchain.NewBlock(chain1.GetHeight()+1, []*blockchain.Transaction{
+				blockchain.NewCoinbaseTransaction("miner", blockchain.MiningReward),
+			}, chain1.GetHeadHash(), "miner", blockchain.DefaultDifficulty)
+			
+			if b.Mine(done) {
+				chain1.TryAddOrReorg(b)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+
+	// 2. Gossip flooding goroutines
+	client := server.Client()
+	for i := 0; i < 15; i++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			pub, priv, _ := crypto.GenerateKeyPair()
+			for j := 0; j < 10; j++ {
+				tx := blockchain.NewTransaction(fmt.Sprintf("recipient_%d_%d", workerID, j), 1, 1, pub, priv)
+				data, _ := json.Marshal(tx)
+				req, _ := http.NewRequest("POST", server.URL+"/tx", strings.NewReader(string(data)))
+				req.Header.Set("Content-Type", "application/json")
+				resp, _ := client.Do(req)
+				if resp != nil {
+					resp.Body.Close()
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+		}(i)
+	}
+
+	wg.Wait()
 }

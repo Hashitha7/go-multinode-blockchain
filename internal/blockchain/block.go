@@ -83,9 +83,10 @@ func (b *Block) Mine(done <-chan struct{}) bool {
 }
 
 // HasValidPoW checks if the block hash satisfies the proof-of-work requirement.
-// It enforces the network's DefaultDifficulty rather than trusting the block's declared difficulty.
+// It verifies the hash has at least b.Difficulty leading zeros.
+// Note: Validate() enforces that b.Difficulty equals the network's DefaultDifficulty.
 func (b *Block) HasValidPoW() bool {
-	target := strings.Repeat("0", DefaultDifficulty)
+	target := strings.Repeat("0", b.Difficulty)
 	return strings.HasPrefix(b.Hash, target)
 }
 
@@ -105,6 +106,11 @@ func (b *Block) Validate(prevBlock *Block) error {
 	computed := b.CalculateHash()
 	if b.Hash != computed {
 		return fmt.Errorf("invalid block hash: got %s, computed %s", b.Hash, computed)
+	}
+
+	// Enforce network difficulty
+	if b.Difficulty != DefaultDifficulty {
+		return fmt.Errorf("invalid block difficulty: got %d, want %d", b.Difficulty, DefaultDifficulty)
 	}
 
 	// Check proof of work
@@ -139,6 +145,9 @@ func (b *Block) ValidateGenesis() error {
 	computed := b.CalculateHash()
 	if b.Hash != computed {
 		return fmt.Errorf("invalid genesis block hash: got %s, computed %s", b.Hash, computed)
+	}
+	if b.Difficulty != 1 {
+		return fmt.Errorf("invalid genesis difficulty: got %d, want 1", b.Difficulty)
 	}
 	return nil
 }

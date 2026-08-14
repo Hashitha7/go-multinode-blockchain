@@ -54,7 +54,7 @@ func NewNode(config Config) *Node {
 
 	// Create core components
 	chain := blockchain.NewChain()
-	
+
 	// Load chain from disk (FR-11 Persistence)
 	if err := chain.LoadFromFile(chainFile); err != nil {
 		log.Printf("[NODE] No local chain found or failed to load: %v. Starting fresh.", err)
@@ -80,7 +80,7 @@ func NewNode(config Config) *Node {
 	// Wire up the miner's block callback to gossip
 	m.OnBlockMined = func(block *blockchain.Block) {
 		gossiper.GossipBlock(block, "")
-		
+
 		// Save chain to disk after mining
 		if err := chain.SaveToFile(chainFile); err != nil {
 			log.Printf("[NODE] Failed to save chain to disk: %v", err)
@@ -90,7 +90,7 @@ func NewNode(config Config) *Node {
 	// Create HTTP server
 	server := network.NewServer(config.ListenAddr, chain, pool, peerManager, gossiper, chainSync, func() {
 		m.Restart()
-		
+
 		// Save chain to disk after accepting a block
 		if err := chain.SaveToFile(chainFile); err != nil {
 			log.Printf("[NODE] Failed to save chain to disk: %v", err)
