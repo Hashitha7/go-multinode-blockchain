@@ -10,6 +10,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/blockchain2/internal/blockchain"
 	"github.com/blockchain2/internal/crypto"
 	"github.com/blockchain2/internal/node"
 )
