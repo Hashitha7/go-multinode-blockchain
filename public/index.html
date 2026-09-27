@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NodeX — Blockchain Explorer</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/@phosphor-icons/web@2.1.1"></script>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<!-- ══════════ SIDEBAR ══════════ -->
+<aside class="sidebar">
+    <div class="sidebar-logo">
+        <div class="logo-icon">⬡</div>
+        <h2>NodeX</h2>
+        <span class="version-tag">v1.0</span>
+    </div>
+
+    <nav class="nav-section">
+        <div class="nav-label">Explorer</div>
+        <a href="#" class="nav-item active" data-tab="dashboard">
+            <i class="ph ph-squares-four"></i> Dashboard
+        </a>
+        <a href="#" class="nav-item" data-tab="blocks">
+            <i class="ph ph-stack"></i> Blocks
+        </a>
+
+        <div class="nav-label" style="margin-top:16px;">Network</div>
+        <a href="#" class="nav-item" data-tab="peers">
+            <i class="ph ph-users-three"></i> Peers
+        </a>
+        <a href="#" class="nav-item" data-tab="balances">
+            <i class="ph ph-coin"></i> Balances
+        </a>
+        <a href="#" class="nav-item" data-tab="mempool">
+            <i class="ph ph-list-bullets"></i> Mempool
+        </a>
+    </nav>
+
+    <div class="sidebar-footer">
+        <div class="node-status-badge">
+            <div class="dot"></div>
+            <span class="status-text" id="sidebar-status">Online</span>
+            <span class="status-addr" id="sidebar-addr">:3001</span>
+        </div>
+    </div>
+</aside>
+
+<!-- ══════════ MAIN ══════════ -->
+<div class="main-content">
+
+    <!-- Top Bar -->
+    <header class="topbar">
+        <div class="topbar-left">
+            <h1 id="page-title">Dashboard</h1>
+            <div class="breadcrumb">
+                <i class="ph ph-circle-wavy-check" style="color:#00e5ff"></i>
+                <span id="topbar-addr">Connecting...</span>
+            </div>
+        </div>
+        <div class="topbar-right">
+            <span class="last-updated"><i class="ph ph-clock"></i> <span id="last-update-text">—</span></span>
+            <button class="refresh-btn" id="refresh-btn">
+                <i class="ph ph-arrows-clockwise"></i> Refresh
+            </button>
+        </div>
+    </header>
+
+    <!-- Content -->
+    <div class="content-area">
+
+        <!-- ── DASHBOARD ── -->
+        <div class="tab-page active" id="page-dashboard">
+            <div class="stats-row">
+                <div class="stat-card cyan">
+                    <div class="stat-icon-wrap"><i class="ph ph-stack"></i></div>
+                    <div class="stat-content">
+                        <div class="label">Chain Height</div>
+                        <div class="value" id="s-height">—</div>
+                        <div class="sub" id="s-chain-len">Chain length —</div>
+                    </div>
+                </div>
+                <div class="stat-card purple">
+                    <div class="stat-icon-wrap"><i class="ph ph-users-three"></i></div>
+                    <div class="stat-content">
+                        <div class="label">Connected Peers</div>
+                        <div class="value" id="s-peers">—</div>
+                        <div class="sub">Active P2P nodes</div>
+                    </div>
+                </div>
+                <div class="stat-card green">
+                    <div class="stat-icon-wrap"><i class="ph ph-list-bullets"></i></div>
+                    <div class="stat-content">
+                        <div class="label">Mempool</div>
+                        <div class="value" id="s-mempool">—</div>
+                        <div class="sub">Pending transactions</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel">
+                <div class="panel-header">
+                    <div class="panel-title">
+                        <i class="ph ph-fingerprint"></i>
+                        Latest Head Hash
+                    </div>
+                </div>
+                <div class="hash-display">
+                    <div class="hash-label">SHA-256 Block Hash</div>
+                    <div class="hash-value" id="s-head-hash">Fetching...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── BLOCKS ── -->
+        <div class="tab-page" id="page-blocks">
+            <div class="panel">
+                <div class="panel-header">
+                    <div class="panel-title">
+                        <i class="ph ph-stack"></i>
+                        Recent Blocks
+                    </div>
+                    <span class="pill" id="blocks-pill">Loading...</span>
+                </div>
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Block Hash</th>
+                            <th>Miner</th>
+                            <th>Txns</th>
+                        </tr>
+                    </thead>
+                    <tbody id="blocks-tbody">
+                        <tr><td colspan="4"><div class="empty-state"><i class="ph ph-circle-notch"></i><p>Loading blocks...</p></div></td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- ── PEERS ── -->
+        <div class="tab-page" id="page-peers">
+            <div class="panel">
+                <div class="panel-header">
+                    <div class="panel-title">
+                        <i class="ph ph-users-three"></i>
+                        Connected Peers
+                    </div>
+                    <span class="pill cyan" id="peers-pill">0 peers</span>
+                </div>
+                <div class="peers-grid" id="peers-grid">
+                    <div class="empty-state" style="grid-column:1/-1">
+                        <i class="ph ph-circle-notch"></i><p>Loading peers...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── BALANCES ── -->
+        <div class="tab-page" id="page-balances">
+            <div class="panel">
+                <div class="panel-header">
+                    <div class="panel-title">
+                        <i class="ph ph-coin"></i>
+                        Account Balances
+                    </div>
+                    <span class="pill" id="balances-pill">0 accounts</span>
+                </div>
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Wallet Address</th>
+                            <th>Balance</th>
+                        </tr>
+                    </thead>
+                    <tbody id="balances-tbody">
+                        <tr><td colspan="2"><div class="empty-state"><i class="ph ph-circle-notch"></i><p>Loading...</p></div></td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- ── MEMPOOL ── -->
+        <div class="tab-page" id="page-mempool">
+            <div class="panel">
+                <div class="panel-header">
+                    <div class="panel-title">
+                        <i class="ph ph-list-bullets"></i>
+                        Pending Transactions
+                    </div>
+                    <span class="pill" id="mempool-pill">0 txns</span>
+                </div>
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Tx ID</th>
+                            <th>From</th>
+                            <th>To</th>
+                            <th>Amount</th>
+                            <th>Fee</th>
+                        </tr>
+                    </thead>
+                    <tbody id="mempool-tbody">
+                        <tr><td colspan="5"><div class="empty-state"><i class="ph ph-check-circle" style="color:#10b981;opacity:1"></i><p style="color:#10b981">Mempool is empty — all transactions confirmed!</p></div></td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>

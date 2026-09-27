@@ -42,6 +42,10 @@ func NewServer(
 	mux.HandleFunc("/balances", handlers.HandleGetBalances)
 	mux.HandleFunc("/status", handlers.HandleGetStatus)
 
+	// Serve static files for frontend dashboard
+	fs := http.FileServer(http.Dir("./public"))
+	mux.Handle("/", fs)
+
 	// Wrap with logging middleware
 	loggedMux := loggingMiddleware(mux)
 
